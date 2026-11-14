@@ -1,0 +1,9 @@
+# dsh-nav-fold bundle patch
+#
+# 只插入一行宿主插件；本插件的宿主半是空壳，作用是把包挂进 Loader，
+# 让 dsh-client-modules 的 dsh.client 扫描收录浏览器半。
+#
+# 注意：patch 会【整体替换】目标行 config，按 id 覆盖本行时必须重述下面每个键。
+- insert:
+    - id: nav-fold
+      name: 'dsh-nav-fold'

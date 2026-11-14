@@ -1,0 +1,69 @@
+{
+  "name": "dsh-nav-fold",
+  "version": "0.1.0",
+  "description": "nav-fold 导航折叠 · 把 DSH 左侧栏顶部的功能入口折叠成图标网格或收起（三态 + 三种控件模型，设置内可切换）",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    "icon.svg"
+  ],
+  "dsh": {
+    "engines": {
+      "dsh": ">=0.2.2-rc.1"
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-client-ui-sidebar"
+      ]
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh": ">=0.2.2-rc.1",
+    "react": "^18.2.0"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "prepublishOnly": "npm test"
+  },
+  "license": "MIT",
+  "author": "TIPE <tipe2587@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TIPE2587/dsh-nav-fold.git"
+  },
+  "homepage": "https://github.com/TIPE2587/dsh-nav-fold#readme",
+  "bugs": {
+    "url": "https://github.com/TIPE2587/dsh-nav-fold/issues"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "sidebar",
+    "navigation",
+    "fold"
+  ],
+  "engines": {
+    "node": ">=22"
+  }
+}

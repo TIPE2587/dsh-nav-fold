@@ -1,0 +1,31 @@
+# ===== 依赖 =====
+node_modules/
+
+# ===== 开发文档（按用户要求：不公开）=====
+docs/
+
+# ===== 构建产物 / 日志 =====
+dist/
+build/
+*.log
+*.tgz
+
+# ===== 安全兜底 =====
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+*secret*
+*credential*
+
+# ===== 编辑器 / 系统 =====
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.bak
+*.swp
+*~
