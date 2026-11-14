@@ -1,7 +1,7 @@
 {
   "name": "dsh-nav-fold",
-  "version": "0.1.0",
-  "description": "nav-fold 导航折叠 · 把 DSH 左侧栏顶部的功能入口折叠成图标网格或收起（三态 + 三种控件模型，设置内可切换）",
+  "version": "0.2.0",
+  "description": "nav-fold 导航折叠 · 把 DSH 左侧栏顶部的功能入口折叠成图标网格或收起（三态 + 三种控件模型，兼容 rc.1 扁平行与 rc.2+ 包裹行）",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
@@ -24,7 +24,7 @@
   ],
   "dsh": {
     "engines": {
-      "dsh": ">=0.2.2-rc.1"
+      "dsh": ">=0.2.2-rc.1 <0.3.0"
     },
     "bundle": {
       "patch": "./cordis.patch.yml"
@@ -38,7 +38,7 @@
     }
   },
   "peerDependencies": {
-    "@deepseek-ai/dsh": ">=0.2.2-rc.1",
+    "@deepseek-ai/dsh": ">=0.2.2-rc.1 <0.3.0",
     "react": "^18.2.0"
   },
   "scripts": {

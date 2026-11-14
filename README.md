@@ -116,6 +116,10 @@ node --test test/*.test.mjs   # 14 项，直接测上线产物 lib/client.js（v
 
 ## 版本契约（升级 DSH 后看这里）
 
-定位器只依赖结构，不依赖 CSS Modules 的 hash 类名：`nav` 的子元素必须是 `button`/`span`（外加我们自己的控制条 `div`），至少一行是"图标 span + 文字 span"两段结构，且不含 `input/textarea/select/a/form`。图标轨判定优先读外壳的 `[data-sidebar-collapsed="true"]`（收起时内容是被平移进轨道的，布局宽度量不出来），读不到再退回宽度判断。
-
-若控制台出现 `未找到「功能入口」导航`，说明外壳结构变了 —— 改 `looksLikePanelNav` 即可。
+- 支持 **DSH >= 0.2.2-rc.1 < 0.3.0**（实测 rc.1 / rc.3）
+- 侧栏入口行两种结构都适配：
+  - rc.1 及更早：`nav > button.panelRow`
+  - rc.2 起：`nav > div.panelEntry > button.panelRow`（行内可能还有「取消固定」按钮）
+- 判据只看结构（标签层级 + aria-label），不认宿主 CSS Modules 的哈希类名
+- 找不到入口导航时保持原生 UI，并在控制台打印一条结构诊断
+- 升级 DSH 后若失效：先看那行诊断，再到仓库提 issue

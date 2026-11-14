@@ -76,6 +76,30 @@ function makePanelNav(doc, rows = 9) {
   return nav;
 }
 
+/** rc.2+ 的结构：每个入口外面多一层 div.panelEntry，按钮上有 aria-label */
+function makeWrappedPanelNav(doc, rows = 9, { withTitles = true } = {}) {
+  const nav = makeEl("NAV", doc);
+  for (let i = 0; i < rows; i += 1) {
+    const entry = makeEl("DIV", doc);
+    const btn = makeEl("BUTTON", doc);
+    btn.setAttribute("aria-label", "Panel " + (i + 1));
+    btn.appendChild(makeEl("SPAN", doc));
+    if (withTitles) {
+      const title = makeEl("SPAN", doc);
+      title.textContent = "Panel " + (i + 1);
+      btn.appendChild(title);
+    }
+    entry.appendChild(btn);
+    nav.appendChild(entry);
+  }
+  const more = makeEl("SPAN", doc);
+  const moreButton = makeEl("BUTTON", doc);
+  moreButton.appendChild(makeEl("SPAN", doc));
+  more.appendChild(moreButton);
+  nav.appendChild(more);
+  return nav;
+}
+
 /** 假 document：只支持本插件用到的查询与注入 */
 function makeDoc() {
   const doc = {
@@ -104,9 +128,9 @@ const fakeReact = {
 };
 
 /** 装载真实产物（lib/client.js 就是上线文件，不额外打包） */
-function loadArtifact({ rows = 9, withNav = true, narrow = false, height = 900, storedMode = null, storedModel = null, storedAuto = null, narrowStoredMode = null } = {}) {
+function loadArtifact({ rows = 9, withNav = true, narrow = false, height = 900, storedMode = null, storedModel = null, storedAuto = null, narrowStoredMode = null, wrapped = false, withTitles = true } = {}) {
   const doc = makeDoc();
-  const nav = withNav ? makePanelNav(doc, rows) : null;
+  const nav = withNav ? (wrapped ? makeWrappedPanelNav(doc, rows, { withTitles }) : makePanelNav(doc, rows)) : null;
   if (nav) doc.querySelectorAll = (selector) => (selector === "nav" ? [nav] : []);
   const store = new Map();
   if (storedMode !== null) store.set("dsh-nav-fold/v1/mode", storedMode);
@@ -546,4 +570,51 @@ test("元数据一致性：package.json 版本 == client.js 的 PLUGIN_VERSION�
   assert.equal(hit[1], pkg.version, "版本号必须与 package.json 一致");
   assert.ok(pkg.files.includes("icon.svg"), "icon.svg 必须在 files 白名单里");
   assert.equal(pkg.exports["./icon"], "./icon.svg", "必须导出 ./icon");
+});
+test("rc.2+ 包裹行（div.panelEntry > button）：能定位、挂控制条、标出保留行", () => {
+  const { mod, ctx, nav } = loadArtifact({ wrapped: true });
+  mod.apply(ctx);
+  assert.equal(nav.attrs["data-navfold"], "expanded", "包裹结构下也要打上档位");
+  const bar = nav.children.find((c) => c.attrs["data-navfold-bar"] !== undefined);
+  assert.ok(bar, "控制条要挂上");
+
+  const entries = nav.children.filter((c) => c.tagName === "DIV");
+  assert.equal(entries.length, 9, "9 个包裹层");
+  assert.equal(mod.__internals.runtime.totals.total, 9, "9 行都被收集");
+  // 默认保留第一行：包裹层与按钮都要打标记（隐藏用包裹层）
+  assert.ok(entries[0].attrs["data-navfold-keep"] !== undefined, "包裹层要打保留标记");
+  assert.ok(entries[0].children[0].attrs["data-navfold-keep"] !== undefined, "按钮也要打保留标记");
+  assert.ok(entries[1].attrs["data-navfold-keep"] === undefined, "没选中的行不打");
+});
+
+test("rc.2+ 窄屏时外壳不渲染标题 span，也要能定位", () => {
+  const { mod, ctx, nav } = loadArtifact({ wrapped: true, withTitles: false });
+  mod.apply(ctx);
+  assert.equal(nav.attrs["data-navfold"], "expanded", "只有图标 + aria-label 也要认得出来");
+});
+
+test("rc.2+ 不叠原生 title（外壳自带 Tooltip）", () => {
+  const { mod, ctx, nav } = loadArtifact({ wrapped: true, storedMode: "compact" });
+  mod.apply(ctx);
+  assert.equal(nav.attrs["data-navfold"], "compact");
+  const titled = [];
+  for (const entry of nav.children) {
+    for (const child of entry.children || []) {
+      if (child.attrs && child.attrs["data-navfold-title"] !== undefined) titled.push(child);
+    }
+  }
+  assert.equal(titled.length, 0, "有包裹层时不加原生 title，交给外壳 Tooltip");
+});
+
+test("rc.2 的紧凑/收起样式覆盖包裹层", () => {
+  const { mod, ctx, doc } = loadArtifact({ wrapped: true });
+  mod.apply(ctx);
+  const css = doc.head.children.map((el) => el.textContent).join("");
+  assert.match(css, /nav\[data-navfold="compact"\]>div:not\(\[data-navfold-bar\]\)/, "紧凑态要按包裹层生效");
+  assert.match(css, /nav\[data-navfold="hidden"\]>div:not\(\[data-navfold-keep\]\)/, "收起态要隐藏包裹层");
+  assert.doesNotMatch(
+    css,
+    /nav\[data-navfold="compact"\]>div>button/,
+    "紧凑态的行按钮规则必须排除控制条，否则控制条按钮会被一起隐藏"
+  );
 });
