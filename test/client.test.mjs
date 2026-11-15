@@ -16,7 +16,9 @@ function makeEl(tagName, doc) {
     isConnected: true,
     ownerDocument: doc,
     clientWidth: 264,
+    _h: 0,
     _text: "",
+    getBoundingClientRect() { return { height: el._h, top: 0, left: 0, width: el.clientWidth, bottom: el._h, right: el.clientWidth }; },
     setAttribute(key, value) { el.attrs[key] = value; },
     getAttribute(key) { return Object.prototype.hasOwnProperty.call(el.attrs, key) ? el.attrs[key] : null; },
     removeAttribute(key) { delete el.attrs[key]; },
@@ -98,6 +100,29 @@ function makeWrappedPanelNav(doc, rows = 9, { withTitles = true } = {}) {
   more.appendChild(moreButton);
   nav.appendChild(more);
   return nav;
+}
+
+/**
+ * 造 rc.3 的「滚动区 > 区域 > 容器(标题 36 / 列表 400)」结构，用来验证顶部固定区。
+ * @returns { area, region, stack, head, list }
+ */
+function attachLayout(nav, doc) {
+  const area = makeEl("DIV", doc);
+  const region = makeEl("DIV", doc);
+  const wrap = makeEl("DIV", doc);
+  const stack = makeEl("DIV", doc);
+  const head = makeEl("DIV", doc);
+  const list = makeEl("DIV", doc);
+  head._h = 36;
+  list._h = 400;
+  stack.appendChild(head);
+  stack.appendChild(list);
+  wrap.appendChild(stack);
+  region.appendChild(wrap);
+  area._h = 524;
+  area.appendChild(nav);
+  area.appendChild(region);
+  return { area, region, wrap, stack, head, list };
 }
 
 /** 假 document：只支持本插件用到的查询与注入 */
@@ -617,4 +642,164 @@ test("rc.2 的紧凑/收起样式覆盖包裹层", () => {
     /nav\[data-navfold="compact"\]>div>button/,
     "紧凑态的行按钮规则必须排除控制条，否则控制条按钮会被一起隐藏"
   );
+});
+const walkTree = (node, out = []) => {
+  if (!node || typeof node !== "object") return out;
+  if (Array.isArray(node)) { node.forEach((child) => walkTree(child, out)); return out; }
+  out.push(node);
+  for (const child of node.children || []) walkTree(child, out);
+  return out;
+};
+
+test("F 列数：默认自适应，可切 8/7/6/5/4，并写进 CSS 与档位属性", () => {
+  const { mod, ctx, nav, doc } = loadArtifact({ wrapped: true });
+  mod.apply(ctx);
+  assert.equal(mod.__internals.getCols(), "auto", "默认自适应");
+  assert.equal(nav.attrs["data-navfold-cols"], "auto");
+
+  mod.__internals.setCols("8");
+  assert.equal(nav.attrs["data-navfold-cols"], "8");
+  const css = doc.head.children.map((el) => el.textContent).join("");
+  for (const n of [8, 7, 6, 5, 4]) {
+    assert.match(css, new RegExp('repeat\\(' + n + ',minmax\\(0,1fr\\)\\)'), n + " 列规则要在样式里");
+  }
+  assert.match(css, /@media \(max-width:767px\)/, "手机宽度要有单独规则");
+  assert.match(css, /repeat\(6,minmax\(0,1fr\)\)/, "手机自适应上限 6 列");
+});
+
+test("F 挤压提示：8 列在 264px 侧栏下给出警告和「切回自适应」", () => {
+  const { mod, ctx } = loadArtifact({ wrapped: true });
+  mod.apply(ctx);
+  mod.__internals.setCols("8");
+  const tree = mod.__internals.NavFoldSettings();
+  const warn = walkTree(tree).find((node) => node.props && node.props["data-navfold-warn"] !== undefined);
+  assert.ok(warn, "264px / 8 列 = 31px < 32px，必须出警告");
+  mod.__internals.setCols("auto");
+  const tree2 = mod.__internals.NavFoldSettings();
+  assert.equal(walkTree(tree2).find((node) => node.props && node.props["data-navfold-warn"] !== undefined), undefined, "自适应不出警告");
+});
+
+test("G 顶部固定区：图标档默认开、收起档默认关、文字档永不固定", () => {
+  const run = loadArtifact({ storedMode: "compact" });
+  const lay = attachLayout(run.nav, run.doc);
+  run.mod.apply(run.ctx);
+
+  assert.equal(run.nav.attrs["data-navfold-pinned"], "on", "图标档默认固定");
+  assert.notEqual(lay.area.attrs["data-navfold-area"], undefined, "滚动区要打标");
+  assert.notEqual(lay.head.attrs["data-navfold-head"], undefined, "标题行要打标");
+  assert.notEqual(lay.list.attrs["data-navfold-list"], undefined, "列表要打标");
+
+  run.mod.__internals.setMode("hidden");
+  assert.equal(run.nav.attrs["data-navfold-pinned"], "off", "收起档默认不固定");
+  run.mod.__internals.setStickHidden(true);
+  assert.equal(run.nav.attrs["data-navfold-pinned"], "on", "开启后收起档也固定");
+
+  run.mod.__internals.setMode("expanded");
+  assert.equal(run.nav.attrs["data-navfold-pinned"], "off", "文字档永不固定");
+  assert.equal(lay.area.attrs["data-navfold-area"], undefined, "切回文字档要摘掉标记");
+  assert.equal(lay.list.attrs["data-navfold-list"], undefined, "标记不能残留");
+});
+
+test("G 侧栏不可见时挂起，不误报异常", () => {
+  const run = loadArtifact({ storedMode: "compact" });
+  run.mod.apply(run.ctx); // 没有布局高度 → pending
+  assert.equal(run.nav.attrs["data-navfold-pinned"], "off", "不可见时不启用");
+  assert.equal(run.mod.__internals.runtime.pinState, "pending");
+  const text = run.mod.__internals.diagnosticsText();
+  assert.match(text, /状态 无异常/, "挂起不算异常");
+  assert.match(text, /待定（侧栏当前不可见/);
+});
+
+test("G 结构不符时回退为粘性，并记一条异常", () => {
+  const run = loadArtifact({ storedMode: "compact" });
+  // 有高度但子节点不满足「短头 + 高列表」→ 回退
+  const area = run.doc.createElement("DIV");
+  area._h = 524;
+  const region = run.doc.createElement("DIV");
+  const a = run.doc.createElement("DIV");
+  const b = run.doc.createElement("DIV");
+  a._h = 100;
+  b._h = 100;
+  region.appendChild(a);
+  region.appendChild(b);
+  area.appendChild(run.nav);
+  area.appendChild(region);
+  run.mod.apply(run.ctx);
+  assert.equal(run.nav.attrs["data-navfold-pinned"], "fallback", "探测失败要回退");
+  const text = run.mod.__internals.diagnosticsText();
+  assert.match(text, /状态 异常/);
+  assert.match(text, /顶部固定未生效/);
+});
+
+test("G 关闭固定开关后完全还原", () => {
+  const run = loadArtifact({ storedMode: "compact" });
+  const lay = attachLayout(run.nav, run.doc);
+  run.mod.apply(run.ctx);
+  assert.equal(run.nav.attrs["data-navfold-pinned"], "on");
+  run.mod.__internals.setStickCompact(false);
+  assert.equal(run.nav.attrs["data-navfold-pinned"], "off");
+  assert.equal(lay.area.attrs["data-navfold-area"], undefined, "关闭后标记全摘");
+  assert.equal(lay.stack.attrs["data-navfold-stack"], undefined);
+});
+
+test("B 外壳已有「更多」时收起态不再渲染我的「全部」", () => {
+  const run = loadArtifact({ wrapped: true, storedMode: "hidden" });
+  const nav = run.nav;
+  const firstBtn = nav.children[0].children[0];
+  firstBtn.setAttribute("class", "panelRow");
+  const unpin = run.doc.createElement("BUTTON");
+  unpin.setAttribute("class", "panelUnpin");
+  nav.children[0].appendChild(unpin);
+  run.mod.apply(run.ctx);
+  assert.equal(run.mod.__internals.runtime.shellHasMore, true, "要识别出外壳自带入口管理");
+  const bar = findBar(nav);
+  assert.ok(bar, "控制条要挂上");
+  assert.equal(bar.children.some((c) => c.attrs["data-navfold-action"] === "all"), false, "默认不显示我的全部");
+
+  run.mod.__internals.setHideAllWhenShellMore(false);
+  assert.equal(run.mod.__internals.getHideAllWhenShellMore(), false);
+});
+
+test("E 结构判定：包裹行记 wrapped，扁平行记 flat", () => {
+  const wrapped = loadArtifact({ wrapped: true });
+  wrapped.mod.apply(wrapped.ctx);
+  assert.equal(wrapped.mod.__internals.runtime.structure, "wrapped");
+  const flat = loadArtifact();
+  flat.mod.apply(flat.ctx);
+  assert.equal(flat.mod.__internals.runtime.structure, "flat");
+});
+
+test("D 诊断串包含版本、结构、行数、告警状态", () => {
+  const { mod, ctx } = loadArtifact({ wrapped: true });
+  mod.apply(ctx);
+  const text = mod.__internals.diagnosticsText();
+  assert.match(text, /dsh-nav-fold 0\.3\.1/);
+  assert.match(text, /状态 无异常/);
+  assert.match(text, /最近告警 —/);
+  assert.match(text, /固定状态 未启用/);
+  assert.match(text, /rc\.2\+（包裹行/);
+  assert.match(text, /入口行数 9/);
+});
+
+test("只重置控件样式：模型回三档，档位与保留行不受影响", () => {
+  const { mod, ctx, store } = loadArtifact({ storedModel: "cycle", storedMode: "hidden" });
+  mod.apply(ctx);
+  assert.equal(mod.__internals.getModel(), "cycle");
+  mod.__internals.resetModelOnly();
+  assert.equal(mod.__internals.getModel(), "segmented");
+  assert.equal(mod.__internals.getMode(), "hidden", "档位不能被一起重置");
+  assert.equal(mod.__internals.getKeep().length, 0, "保留行不能被一起重置");
+});
+
+test("C 中英词条一一对应（不缺键）", () => {
+  const src = readFileSync(new URL("../lib/client.js", import.meta.url), "utf8");
+  const zhBlock = src.slice(src.indexOf("  zh: {"), src.indexOf("  en: {"));
+  const enBlock = src.slice(src.indexOf("  en: {"), src.indexOf("};", src.indexOf("  en: {")));
+  const keys = (block) => (block.match(/^\s{4}"([^"]+)":/gm) || []).map((line) => line.trim().replace(/:$/, "").replace(/"/g, ""));
+  const zh = keys(zhBlock);
+  const en = keys(enBlock);
+  const missingEn = zh.filter((key) => en.indexOf(key) === -1);
+  const missingZh = en.filter((key) => zh.indexOf(key) === -1);
+  assert.deepEqual(missingEn, [], "英文缺词条");
+  assert.deepEqual(missingZh, [], "中文缺词条");
 });
