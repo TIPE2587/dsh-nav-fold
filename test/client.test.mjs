@@ -16,21 +16,27 @@ function makeEl(tagName, doc) {
     isConnected: true,
     ownerDocument: doc,
     clientWidth: 264,
+    offsetWidth: 264,
+    clientHeight: 524,
+    scrollHeight: 524,
     _h: 0,
     _top: 0,
     _text: "",
     style: {
       _vars: {},
-      setProperty(key, value) { this._vars[key] = value; },
-      removeProperty(key) { delete this._vars[key]; }
+      _prio: {},
+      setProperty(key, value, priority) { this._vars[key] = value; this._prio[key] = priority || ""; },
+      getPropertyValue(key) { return this._vars[key] || ""; },
+      getPropertyPriority(key) { return this._prio[key] || ""; },
+      removeProperty(key) { delete this._vars[key]; delete this._prio[key]; }
     },
     getBoundingClientRect() {
       let top = el._top;
       const scrollParent = el._scrollParent;
       if (scrollParent) {
         const scroll = scrollParent.scrollTop || 0;
-        const inlinePos = el.style ? el.style.position : "";
-        const stickyTop = inlinePos && inlinePos !== "static" ? parseFloat(el.style.top) || 0 : null;
+        const inlinePos = el.style && typeof el.style.getPropertyValue === "function" ? el.style.getPropertyValue("position") : "";
+        const stickyTop = inlinePos && inlinePos !== "static" ? parseFloat(el.style.getPropertyValue("top")) || 0 : null;
         let layoutTop = (el._layoutOffset || 0) - scroll;
         if (stickyTop !== null) layoutTop = Math.max(layoutTop, stickyTop);
         top = (scrollParent._top || 0) + layoutTop;
@@ -798,7 +804,7 @@ test("D 诊断串包含版本、结构、行数、告警状态", () => {
   const { mod, ctx } = loadArtifact({ wrapped: true });
   mod.apply(ctx);
   const text = mod.__internals.diagnosticsText();
-  assert.match(text, /dsh-nav-fold 0.3.4/);
+      assert.match(text, /dsh-nav-fold 0\.3\.6/);
   assert.match(text, /状态 无异常/);
   assert.match(text, /最近告警 —/);
   assert.match(text, /固定状态 未启用/);
@@ -880,10 +886,10 @@ test("0.3.4 滚动静止时重复重绘不会让偏移自增（回归）", () =>
 
   // 模拟：滚到 110 且 nav 已处于 sticky 态
   lay.area.scrollTop = 110;
-  run.nav.style.position = "sticky";
-  run.nav.style.top = "8px";
-  lay.head.style.position = "sticky";
-  lay.head.style.top = "110px";
+  run.nav.style.setProperty("position", "sticky", "important");
+  run.nav.style.setProperty("top", "8px", "important");
+  lay.head.style.setProperty("position", "sticky", "important");
+  lay.head.style.setProperty("top", "110px", "important");
 
   for (let i = 0; i < 3; i += 1) run.mod.__internals.paintNav();
   assert.equal(lay.area.style._vars["--navfold-pin-top"], "8px", "偏移不能随重绘增长");
@@ -904,4 +910,125 @@ test("0.3.4 偏移越界时保留旧值", () => {
   assert.ok(run.mod.__internals.acceptOffset(1000, 8, 0, true) === 8, "acceptOffset 直接拒绝越界");
   assert.ok(run.mod.__internals.acceptOffset(120, 8, 300, true) === 8, "已滚动时拒绝变大");
   assert.ok(run.mod.__internals.acceptOffset(6, 8, 300, true) === 6, "变小是允许的");
+});
+test("0.3.5 缝隙高度：headTop - (navTop + navH) 写入 --navfold-pin-gap", () => {
+  const run = loadArtifact({ storedMode: "compact" });
+  const lay = attachLayout(run.nav, run.doc);
+  run.mod.apply(run.ctx);
+  // 布局：navTop 8 + navH 92 = 100，标题行 110 → gap 10
+  assert.equal(lay.area.style._vars["--navfold-pin-gap"], "10px", "缝隙高度要写进变量");
+  assert.equal(run.mod.__internals.runtime.pinGap, 10);
+});
+
+test("0.3.5 两条缝用实心阴影补色（上方 + 下方）", () => {
+  const run = loadArtifact({ storedMode: "compact" });
+  attachLayout(run.nav, run.doc);
+  run.mod.apply(run.ctx);
+  const css = run.doc.head.children.map((el) => el.textContent).join("");
+  assert.ok(css.includes("box-shadow:0 calc(-1 * var(--navfold-pin-top"), "上方缝隙用阴影补");
+  assert.ok(css.includes("0 var(--navfold-pin-gap"), "下方缝隙用阴影补");
+  assert.ok(css.includes("var(--navfold-pin-bg,transparent)"), "补色跟随面板底色");
+});
+test("0.3.5 标题行底色避开滚动条槽位（--navfold-gutter）", () => {
+  const run = loadArtifact({ storedMode: "compact" });
+  const lay = attachLayout(run.nav, run.doc);
+  lay.area.offsetWidth = 279; // clientWidth 264 → 实测槽位 15px（经典滚动条）
+  lay.area.scrollHeight = 800; // 可滚动，才需要让位
+  run.mod.apply(run.ctx);
+  assert.equal(lay.area.style._vars["--navfold-gutter"], "15px", "槽位宽度要写进变量");
+  assert.equal(run.mod.__internals.runtime.pinGutter, 15);
+  const css = run.doc.head.children.map((el) => el.textContent).join("");
+  assert.ok(css.includes("right:var(--navfold-gutter"), "标题行底色要内缩到槽位之外");
+  assert.ok(css.includes("[data-navfold-pin-head]{position:sticky"), "标题行自己仍保持 sticky");
+});
+test("0.3.6 测量必须用内联 !important 压过样式表（回归）", () => {
+  const run = loadArtifact({ storedMode: "compact" });
+  const lay = attachLayout(run.nav, run.doc);
+  run.mod.apply(run.ctx);
+  // 模拟样式表的 !important：只有内联 important 才能改成 static
+  run.nav.style.setProperty("position", "sticky", "important");
+  run.nav.style.setProperty("top", "8px", "important");
+  const calls = [];
+  const origSet = run.nav.style.setProperty.bind(run.nav.style);
+  run.nav.style.setProperty = (k, v, p) => { calls.push(k + "=" + v + "/" + (p || "")); return origSet(k, v, p); };
+  const area = lay.area;
+  area.scrollTop = 110;
+  const offset = run.mod.__internals.measureLayoutOffset(area, run.nav);
+  assert.ok(calls.includes("position=static/important"), "必须以 important 覆盖");
+  assert.ok(calls.includes("top=auto/important"), "top 也要覆盖");
+  assert.equal(offset, 8, "覆盖后应量到正常流偏移 8px（不是 118）");
+});
+
+test("0.3.6 深层嵌套也能找到工作区标题行", () => {
+  const run = loadArtifact({ storedMode: "compact" });
+  const doc = run.doc;
+  const area = doc.createElement("DIV");
+  area._h = 524;
+  area._top = 0;
+  let cursor = doc.createElement("DIV"); // region
+  const region = cursor;
+  for (let i = 0; i < 7; i += 1) {
+    const next = doc.createElement("DIV");
+    cursor.appendChild(next);
+    cursor = next;
+  }
+  const head = doc.createElement("DIV");
+  head._h = 36;
+  const list = doc.createElement("DIV");
+  list._h = 400;
+  cursor.appendChild(head);
+  cursor.appendChild(list);
+  area.appendChild(run.nav);
+  area.appendChild(region);
+  run.nav._scrollParent = area;
+  run.nav._layoutOffset = 8;
+  run.nav._h = 92;
+  run.mod.apply(run.ctx);
+  assert.equal(run.nav.attrs["data-navfold-pinned"], "on", "深层结构也要贴上标题行");
+  assert.notEqual(head.attrs["data-navfold-pin-head"], undefined, "标题行要被打标");
+});
+
+test("0.3.6 导航偏移被钳制在 80px 内", () => {
+  const run = loadArtifact({ storedMode: "compact" });
+  const lay = attachLayout(run.nav, run.doc);
+  run.mod.apply(run.ctx);
+  assert.equal(run.mod.__internals.runtime.pinTop, 8);
+  // 让布局偏移变成 300px（异常值）
+  run.nav._layoutOffset = 300;
+  run.mod.__internals.paintNav();
+  assert.ok(run.mod.__internals.runtime.pinTop <= 80, "导航偏移不能超过 80px");
+});
+test("0.3.6-REV overlay 滚动条：槽位实测 0 时按 12px 让位", () => {
+  const run = loadArtifact({ storedMode: "compact" });
+  const lay = attachLayout(run.nav, run.doc);
+  lay.area.offsetWidth = 264;
+  lay.area.scrollHeight = 800;
+  lay.area.clientHeight = 524;
+  run.mod.apply(run.ctx);
+  assert.equal(run.mod.__internals.runtime.pinGutter, 0, "实测槽位是 0");
+  assert.equal(run.mod.__internals.runtime.pinInset, 12, "overlay 下按 12px 让位");
+  assert.equal(lay.area.style._vars["--navfold-gutter"], "12px");
+  assert.equal(run.mod.__internals.runtime.pinScrollable, true);
+});
+
+test("0.3.6-REV 不可滚动时不让位（保持满宽）", () => {
+  const run = loadArtifact({ storedMode: "compact" });
+  const lay = attachLayout(run.nav, run.doc);
+  lay.area.scrollHeight = 524;
+  lay.area.clientHeight = 524;
+  run.mod.apply(run.ctx);
+  assert.equal(run.mod.__internals.runtime.pinScrollable, false);
+  assert.equal(lay.area.style._vars["--navfold-gutter"], "0px", "没有滚动条就不让位");
+});
+
+test("0.3.6-REV 重排瞬间先把缝隙归零（失败关闭）", () => {
+  const run = loadArtifact({ storedMode: "compact" });
+  const lay = attachLayout(run.nav, run.doc);
+  lay.area.scrollHeight = 800;
+  run.mod.apply(run.ctx);
+  assert.equal(lay.area.style._vars["--navfold-pin-gap"], "10px", "正常状态下缝隙 10px");
+  const handlers = run.listeners.resize || [];
+  assert.ok(handlers.length > 0, "必须挂了 resize 监听");
+  handlers.forEach((fn) => fn());
+  assert.equal(lay.area.style._vars["--navfold-pin-gap"], "0px", "触发重排时同步归零，避免露内容");
 });
