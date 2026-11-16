@@ -17,13 +17,14 @@ function makeEl(tagName, doc) {
     ownerDocument: doc,
     clientWidth: 264,
     _h: 0,
+    _top: 0,
     _text: "",
     style: {
       _vars: {},
       setProperty(key, value) { this._vars[key] = value; },
       removeProperty(key) { delete this._vars[key]; }
     },
-    getBoundingClientRect() { return { height: el._h, top: 0, left: 0, width: el.clientWidth, bottom: el._h, right: el.clientWidth }; },
+    getBoundingClientRect() { return { height: el._h, top: el._top, left: 0, width: el.clientWidth, bottom: el._top + el._h, right: el.clientWidth }; },
     setAttribute(key, value) { el.attrs[key] = value; },
     getAttribute(key) { return Object.prototype.hasOwnProperty.call(el.attrs, key) ? el.attrs[key] : null; },
     removeAttribute(key) { delete el.attrs[key]; },
@@ -125,7 +126,10 @@ function attachLayout(nav, doc) {
   wrap.appendChild(stack);
   region.appendChild(wrap);
   area._h = 524;
+  area._top = 0;
   nav._h = 92;
+  nav._top = 8;
+  head._top = 110;
   area.appendChild(nav);
   area.appendChild(region);
   return { area, region, wrap, stack, head, list };
@@ -778,7 +782,7 @@ test("D 诊断串包含版本、结构、行数、告警状态", () => {
   const { mod, ctx } = loadArtifact({ wrapped: true });
   mod.apply(ctx);
   const text = mod.__internals.diagnosticsText();
-  assert.match(text, /dsh-nav-fold 0\.3\.2/);
+  assert.match(text, /dsh-nav-fold 0\.3\.3/);
   assert.match(text, /状态 无异常/);
   assert.match(text, /最近告警 —/);
   assert.match(text, /固定状态 未启用/);
@@ -820,4 +824,35 @@ test("K1 分隔线用绝对定位满宽（grid / flex 两种 nav 都适用）", 
     css.includes('nav[data-navfold-pinned="on"],nav[data-navfold-pinned="nav-only"]{position:sticky'),
     "导航用 sticky 贴顶"
   );
+});
+
+test("0.3.3 固定偏移：按实测内容偏移写 CSS 变量（滚动位置无关）", () => {
+  const run = loadArtifact({ storedMode: "compact" });
+  const lay = attachLayout(run.nav, run.doc);
+  run.mod.apply(run.ctx);
+  assert.equal(lay.area.style._vars["--navfold-pin-top"], "8px", "nav 偏移应取自实测");
+  assert.equal(lay.area.style._vars["--navfold-pin-head-top"], "110px", "标题行偏移应取自实测");
+  assert.equal(run.mod.__internals.runtime.pinTop, 8);
+  assert.equal(run.mod.__internals.runtime.pinHeadTop, 110);
+
+  // 模拟已滚动：内容偏移不应变化
+  lay.area.scrollTop = 40;
+  run.mod.__internals.paintForTest ? run.mod.__internals.paintForTest() : null;
+});
+
+test("0.3.3 样式用变量而不是写死 top", () => {
+  const run = loadArtifact({ storedMode: "compact" });
+  attachLayout(run.nav, run.doc);
+  run.mod.apply(run.ctx);
+  const css = run.doc.head.children.map((el) => el.textContent).join("");
+  assert.ok(css.includes("top:var(--navfold-pin-top"), "nav 用偏移变量");
+  assert.ok(css.includes("top:var(--navfold-pin-head-top"), "标题行用偏移变量");
+});
+test("0.3.3 设置页：分组标题区分图标档 / 收起档，行标签仍是「固定顶部区域」", () => {
+  const { mod, ctx } = loadArtifact({ wrapped: true });
+  mod.apply(ctx);
+  const json = JSON.stringify(mod.__internals.NavFoldSettings());
+  assert.ok(json.includes("图标档"), "要有「图标档」分组标题");
+  assert.ok(json.includes("收起档"), "要有「收起档」分组标题");
+  assert.equal((json.match(/固定顶部区域/g) || []).length, 2, "两行都叫「固定顶部区域」，靠分组标题区分");
 });
