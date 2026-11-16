@@ -24,7 +24,19 @@ function makeEl(tagName, doc) {
       setProperty(key, value) { this._vars[key] = value; },
       removeProperty(key) { delete this._vars[key]; }
     },
-    getBoundingClientRect() { return { height: el._h, top: el._top, left: 0, width: el.clientWidth, bottom: el._top + el._h, right: el.clientWidth }; },
+    getBoundingClientRect() {
+      let top = el._top;
+      const scrollParent = el._scrollParent;
+      if (scrollParent) {
+        const scroll = scrollParent.scrollTop || 0;
+        const inlinePos = el.style ? el.style.position : "";
+        const stickyTop = inlinePos && inlinePos !== "static" ? parseFloat(el.style.top) || 0 : null;
+        let layoutTop = (el._layoutOffset || 0) - scroll;
+        if (stickyTop !== null) layoutTop = Math.max(layoutTop, stickyTop);
+        top = (scrollParent._top || 0) + layoutTop;
+      }
+      return { height: el._h, top, left: 0, width: el.clientWidth, bottom: top + el._h, right: el.clientWidth };
+    },
     setAttribute(key, value) { el.attrs[key] = value; },
     getAttribute(key) { return Object.prototype.hasOwnProperty.call(el.attrs, key) ? el.attrs[key] : null; },
     removeAttribute(key) { delete el.attrs[key]; },
@@ -129,7 +141,11 @@ function attachLayout(nav, doc) {
   area._top = 0;
   nav._h = 92;
   nav._top = 8;
+  nav._scrollParent = area;
+  nav._layoutOffset = 8;
   head._top = 110;
+  head._scrollParent = area;
+  head._layoutOffset = 110;
   area.appendChild(nav);
   area.appendChild(region);
   return { area, region, wrap, stack, head, list };
@@ -782,7 +798,7 @@ test("D 诊断串包含版本、结构、行数、告警状态", () => {
   const { mod, ctx } = loadArtifact({ wrapped: true });
   mod.apply(ctx);
   const text = mod.__internals.diagnosticsText();
-  assert.match(text, /dsh-nav-fold 0\.3\.3/);
+  assert.match(text, /dsh-nav-fold 0.3.4/);
   assert.match(text, /状态 无异常/);
   assert.match(text, /最近告警 —/);
   assert.match(text, /固定状态 未启用/);
@@ -855,4 +871,37 @@ test("0.3.3 设置页：分组标题区分图标档 / 收起档，行标签仍�
   assert.ok(json.includes("图标档"), "要有「图标档」分组标题");
   assert.ok(json.includes("收起档"), "要有「收起档」分组标题");
   assert.equal((json.match(/固定顶部区域/g) || []).length, 2, "两行都叫「固定顶部区域」，靠分组标题区分");
+});
+test("0.3.4 滚动静止时重复重绘不会让偏移自增（回归）", () => {
+  const run = loadArtifact({ storedMode: "compact" });
+  const lay = attachLayout(run.nav, run.doc);
+  run.mod.apply(run.ctx);
+  assert.equal(lay.area.style._vars["--navfold-pin-top"], "8px");
+
+  // 模拟：滚到 110 且 nav 已处于 sticky 态
+  lay.area.scrollTop = 110;
+  run.nav.style.position = "sticky";
+  run.nav.style.top = "8px";
+  lay.head.style.position = "sticky";
+  lay.head.style.top = "110px";
+
+  for (let i = 0; i < 3; i += 1) run.mod.__internals.paintNav();
+  assert.equal(lay.area.style._vars["--navfold-pin-top"], "8px", "偏移不能随重绘增长");
+  assert.equal(lay.area.style._vars["--navfold-pin-head-top"], "110px", "标题行偏移同样不能增长");
+  assert.equal(run.mod.__internals.runtime.pinTop, 8);
+});
+
+test("0.3.4 偏移越界时保留旧值", () => {
+  const run = loadArtifact({ storedMode: "compact" });
+  const lay = attachLayout(run.nav, run.doc);
+  run.mod.apply(run.ctx);
+  assert.equal(run.mod.__internals.runtime.pinTop, 8);
+  // 模拟外壳结构变化导致量到离谱的值（如 1000）
+  lay.area.scrollTop = 0;
+  run.nav._layoutOffset = 1000;
+  run.mod.__internals.paintNav();
+  assert.equal(run.mod.__internals.runtime.pinTop, 8, "越界值必须被拒绝，保留上一次");
+  assert.ok(run.mod.__internals.acceptOffset(1000, 8, 0, true) === 8, "acceptOffset 直接拒绝越界");
+  assert.ok(run.mod.__internals.acceptOffset(120, 8, 300, true) === 8, "已滚动时拒绝变大");
+  assert.ok(run.mod.__internals.acceptOffset(6, 8, 300, true) === 6, "变小是允许的");
 });
