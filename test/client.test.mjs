@@ -18,6 +18,11 @@ function makeEl(tagName, doc) {
     clientWidth: 264,
     _h: 0,
     _text: "",
+    style: {
+      _vars: {},
+      setProperty(key, value) { this._vars[key] = value; },
+      removeProperty(key) { delete this._vars[key]; }
+    },
     getBoundingClientRect() { return { height: el._h, top: 0, left: 0, width: el.clientWidth, bottom: el._h, right: el.clientWidth }; },
     setAttribute(key, value) { el.attrs[key] = value; },
     getAttribute(key) { return Object.prototype.hasOwnProperty.call(el.attrs, key) ? el.attrs[key] : null; },
@@ -120,6 +125,7 @@ function attachLayout(nav, doc) {
   wrap.appendChild(stack);
   region.appendChild(wrap);
   area._h = 524;
+  nav._h = 92;
   area.appendChild(nav);
   area.appendChild(region);
   return { area, region, wrap, stack, head, list };
@@ -685,9 +691,10 @@ test("G 顶部固定区：图标档默认开、收起档默认关、文字档永
   run.mod.apply(run.ctx);
 
   assert.equal(run.nav.attrs["data-navfold-pinned"], "on", "图标档默认固定");
-  assert.notEqual(lay.area.attrs["data-navfold-area"], undefined, "滚动区要打标");
-  assert.notEqual(lay.head.attrs["data-navfold-head"], undefined, "标题行要打标");
-  assert.notEqual(lay.list.attrs["data-navfold-list"], undefined, "列表要打标");
+  assert.notEqual(lay.head.attrs["data-navfold-pin-head"], undefined, "工作区标题行要打标");
+  assert.equal(lay.area.attrs["data-navfold-pin-head"], undefined, "不再重排滚动区（0.3.1 布局已废弃）");
+  assert.equal(lay.area.style._vars["--navfold-nav-h"], "92px", "nav 高度要写进变量，供标题行 sticky 用");
+  assert.equal(lay.area.style._vars["--navfold-pin-bg"], "transparent", "取不到底色时保持透明，不制造色块");
 
   run.mod.__internals.setMode("hidden");
   assert.equal(run.nav.attrs["data-navfold-pinned"], "off", "收起档默认不固定");
@@ -696,8 +703,7 @@ test("G 顶部固定区：图标档默认开、收起档默认关、文字档永
 
   run.mod.__internals.setMode("expanded");
   assert.equal(run.nav.attrs["data-navfold-pinned"], "off", "文字档永不固定");
-  assert.equal(lay.area.attrs["data-navfold-area"], undefined, "切回文字档要摘掉标记");
-  assert.equal(lay.list.attrs["data-navfold-list"], undefined, "标记不能残留");
+  assert.equal(lay.head.attrs["data-navfold-pin-head"], undefined, "切回文字档要摘掉标题行标记");
 });
 
 test("G 侧栏不可见时挂起，不误报异常", () => {
@@ -710,7 +716,7 @@ test("G 侧栏不可见时挂起，不误报异常", () => {
   assert.match(text, /待定（侧栏当前不可见/);
 });
 
-test("G 结构不符时回退为粘性，并记一条异常", () => {
+test("G 找不到工作区标题行时只固定导航，并记一条异常", () => {
   const run = loadArtifact({ storedMode: "compact" });
   // 有高度但子节点不满足「短头 + 高列表」→ 回退
   const area = run.doc.createElement("DIV");
@@ -725,10 +731,10 @@ test("G 结构不符时回退为粘性，并记一条异常", () => {
   area.appendChild(run.nav);
   area.appendChild(region);
   run.mod.apply(run.ctx);
-  assert.equal(run.nav.attrs["data-navfold-pinned"], "fallback", "探测失败要回退");
+  assert.equal(run.nav.attrs["data-navfold-pinned"], "nav-only", "找不到标题行时只固定导航");
   const text = run.mod.__internals.diagnosticsText();
   assert.match(text, /状态 异常/);
-  assert.match(text, /顶部固定未生效/);
+  assert.match(text, /仅固定导航/);
 });
 
 test("G 关闭固定开关后完全还原", () => {
@@ -738,8 +744,7 @@ test("G 关闭固定开关后完全还原", () => {
   assert.equal(run.nav.attrs["data-navfold-pinned"], "on");
   run.mod.__internals.setStickCompact(false);
   assert.equal(run.nav.attrs["data-navfold-pinned"], "off");
-  assert.equal(lay.area.attrs["data-navfold-area"], undefined, "关闭后标记全摘");
-  assert.equal(lay.stack.attrs["data-navfold-stack"], undefined);
+  assert.equal(lay.head.attrs["data-navfold-pin-head"], undefined, "关闭后标题行标记要摘");
 });
 
 test("B 外壳已有「更多」时收起态不再渲染我的「全部」", () => {
@@ -773,7 +778,7 @@ test("D 诊断串包含版本、结构、行数、告警状态", () => {
   const { mod, ctx } = loadArtifact({ wrapped: true });
   mod.apply(ctx);
   const text = mod.__internals.diagnosticsText();
-  assert.match(text, /dsh-nav-fold 0\.3\.1/);
+  assert.match(text, /dsh-nav-fold 0\.3\.2/);
   assert.match(text, /状态 无异常/);
   assert.match(text, /最近告警 —/);
   assert.match(text, /固定状态 未启用/);
@@ -802,4 +807,17 @@ test("C 中英词条一一对应（不缺键）", () => {
   const missingZh = en.filter((key) => zh.indexOf(key) === -1);
   assert.deepEqual(missingEn, [], "英文缺词条");
   assert.deepEqual(missingZh, [], "中文缺词条");
+});
+
+test("K1 分隔线用绝对定位满宽（grid / flex 两种 nav 都适用）", () => {
+  const run = loadArtifact({ storedMode: "compact" });
+  attachLayout(run.nav, run.doc);
+  run.mod.apply(run.ctx);
+  const css = run.doc.head.children.map((el) => el.textContent).join("");
+  assert.ok(css.includes("[data-navfold-pin-head]{position:sticky"), "标题行要 sticky");
+  assert.ok(css.includes('::after{content:"";position:absolute;left:0;right:0'), "分隔线绝对定位满宽");
+  assert.ok(
+    css.includes('nav[data-navfold-pinned="on"],nav[data-navfold-pinned="nav-only"]{position:sticky'),
+    "导航用 sticky 贴顶"
+  );
 });
