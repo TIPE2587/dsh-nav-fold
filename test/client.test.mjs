@@ -804,7 +804,7 @@ test("D 诊断串包含版本、结构、行数、告警状态", () => {
   const { mod, ctx } = loadArtifact({ wrapped: true });
   mod.apply(ctx);
   const text = mod.__internals.diagnosticsText();
-      assert.match(text, /dsh-nav-fold 0\.3\.6/);
+          assert.match(text, /dsh-nav-fold 0\.3\.8/);
   assert.match(text, /状态 无异常/);
   assert.match(text, /最近告警 —/);
   assert.match(text, /固定状态 未启用/);
@@ -835,17 +835,14 @@ test("C 中英词条一一对应（不缺键）", () => {
   assert.deepEqual(missingZh, [], "中文缺词条");
 });
 
-test("K1 分隔线用绝对定位满宽（grid / flex 两种 nav 都适用）", () => {
+test("K1 分隔线随缝隙一起由 ::after 绘制（宽度取自 nav）", () => {
   const run = loadArtifact({ storedMode: "compact" });
   attachLayout(run.nav, run.doc);
   run.mod.apply(run.ctx);
   const css = run.doc.head.children.map((el) => el.textContent).join("");
-  assert.ok(css.includes("[data-navfold-pin-head]{position:sticky"), "标题行要 sticky");
-  assert.ok(css.includes('::after{content:"";position:absolute;left:0;right:0'), "分隔线绝对定位满宽");
-  assert.ok(
-    css.includes('nav[data-navfold-pinned="on"],nav[data-navfold-pinned="nav-only"]{position:sticky'),
-    "导航用 sticky 贴顶"
-  );
+  assert.ok(css.includes('nav[data-navfold-pinned="on"]::after'), "要有 ::after 规则");
+  assert.ok(css.includes("top:100%;width:var(--navfold-nav-w,100%)"), "从 nav 底边开始、宽度取 nav 实测");
+  assert.ok(css.includes("background-color:inherit"), "颜色跟着父级继承，换肤同帧");
 });
 
 test("0.3.3 固定偏移：按实测内容偏移写 CSS 变量（滚动位置无关）", () => {
@@ -920,14 +917,14 @@ test("0.3.5 缝隙高度：headTop - (navTop + navH) 写入 --navfold-pin-gap", 
   assert.equal(run.mod.__internals.runtime.pinGap, 10);
 });
 
-test("0.3.5 两条缝用实心阴影补色（上方 + 下方）", () => {
+test("0.3.5 缝隙补色：上方 ::before、下方 ::after，都是 inherit", () => {
   const run = loadArtifact({ storedMode: "compact" });
   attachLayout(run.nav, run.doc);
   run.mod.apply(run.ctx);
   const css = run.doc.head.children.map((el) => el.textContent).join("");
-  assert.ok(css.includes("box-shadow:0 calc(-1 * var(--navfold-pin-top"), "上方缝隙用阴影补");
-  assert.ok(css.includes("0 var(--navfold-pin-gap"), "下方缝隙用阴影补");
-  assert.ok(css.includes("var(--navfold-pin-bg,transparent)"), "补色跟随面板底色");
+  assert.ok(css.includes("bottom:100%;height:var(--navfold-pin-top"), "上方缝隙由 ::before 补");
+  assert.ok(css.includes("top:100%;width:var(--navfold-nav-w"), "下方缝隙由 ::after 补");
+  assert.ok(css.includes("background-color:inherit"), "补色跟随继承，不再抄颜色");
 });
 test("0.3.5 标题行底色避开滚动条槽位（--navfold-gutter）", () => {
   const run = loadArtifact({ storedMode: "compact" });
@@ -938,7 +935,7 @@ test("0.3.5 标题行底色避开滚动条槽位（--navfold-gutter）", () => {
   assert.equal(lay.area.style._vars["--navfold-gutter"], "15px", "槽位宽度要写进变量");
   assert.equal(run.mod.__internals.runtime.pinGutter, 15);
   const css = run.doc.head.children.map((el) => el.textContent).join("");
-  assert.ok(css.includes("right:var(--navfold-gutter"), "标题行底色要内缩到槽位之外");
+  assert.ok(css.includes("width:var(--navfold-nav-w"), "标题行底色按 nav 宽度绘制（自然不含滚动条）");
   assert.ok(css.includes("[data-navfold-pin-head]{position:sticky"), "标题行自己仍保持 sticky");
 });
 test("0.3.6 测量必须用内联 !important 压过样式表（回归）", () => {
@@ -1031,4 +1028,94 @@ test("0.3.6-REV 重排瞬间先把缝隙归零（失败关闭）", () => {
   assert.ok(handlers.length > 0, "必须挂了 resize 监听");
   handlers.forEach((fn) => fn());
   assert.equal(lay.area.style._vars["--navfold-pin-gap"], "0px", "触发重排时同步归零，避免露内容");
+});
+test("0.3.8 固定区拦截滚动：滚轮与触控都把位移交给列表", () => {
+  const run = loadArtifact({ storedMode: "compact" });
+  const lay = attachLayout(run.nav, run.doc);
+  run.mod.apply(run.ctx);
+  lay.list.scrollTop = 0;
+  let prevented = 0;
+  run.nav.fire("wheel", { deltaY: 120, preventDefault() { prevented += 1; } });
+  assert.equal(lay.list.scrollTop, 120, "滚轮位移要转给列表");
+  assert.equal(prevented, 1, "转移成功时阻止默认滚动");
+  run.nav.fire("touchstart", {});
+  run.nav.fire("touchmove", { touches: [{ clientY: 300 }] });
+  run.nav.fire("touchmove", { touches: [{ clientY: 220 }], preventDefault() {} });
+  assert.equal(lay.list.scrollTop, 200, "触控位移也要转给列表（80px）");
+  run.mod.__internals.setStickCompact(false);
+  assert.equal(lay.list.attrs["data-navfold-fill-list"], undefined, "关闭后标记要摘");
+});
+test("0.3.8 滚轮转发：在导航上滚动会转给会话列表", () => {
+  const run = loadArtifact({ storedMode: "compact" });
+  const lay = attachLayout(run.nav, run.doc);
+  run.mod.apply(run.ctx);
+  lay.list.scrollTop = 0;
+  let prevented = 0;
+  run.nav.fire("wheel", { deltaY: 120, preventDefault() { prevented += 1; } });
+  assert.equal(lay.list.scrollTop, 120, "滚动量要转给列表");
+  assert.equal(prevented, 1, "转移成功时要阻止默认滚动");
+  run.nav.fire("wheel", { deltaY: -40, preventDefault() {} });
+  assert.equal(lay.list.scrollTop, 80);
+});
+test("0.3.8 两块等宽：写 --navfold-nav-w，标题行底色按 nav 宽度绘制", () => {
+  const run = loadArtifact({ storedMode: "compact" });
+  const lay = attachLayout(run.nav, run.doc);
+  run.mod.apply(run.ctx);
+  assert.equal(lay.area.style._vars["--navfold-nav-w"], "264px", "nav 宽度要写进变量");
+  const css = run.doc.head.children.map((el) => el.textContent).join("");
+  assert.ok(css.includes("width:var(--navfold-nav-w"), "标题行底色宽度取自 nav");
+  assert.ok(css.includes("top:calc(-1 * var(--navfold-pin-gap"), "标题行底色向上盖住缝隙");
+});
+
+test("0.3.8 不再用 box-shadow 补色（改由伪元素 inherit）", () => {
+  const run = loadArtifact({ storedMode: "compact" });
+  attachLayout(run.nav, run.doc);
+  run.mod.apply(run.ctx);
+  const css = run.doc.head.children.map((el) => el.textContent).join("");
+  assert.equal(css.includes("box-shadow:0 calc(-1 * var(--navfold-pin-top"), false, "上方缝隙不再用阴影");
+  assert.ok(css.includes("background-color:inherit"), "改用继承");
+});
+
+test("0.3.8 主题刷新：取不到实色时保留旧值，不写 transparent", () => {
+  const run = loadArtifact({ storedMode: "compact" });
+  const lay = attachLayout(run.nav, run.doc);
+  run.mod.apply(run.ctx);
+  lay.area.style._vars["--navfold-pin-bg"] = "rgb(1, 2, 3)";
+  run.mod.__internals.runtime.pinBg = "rgb(1, 2, 3)";
+  // 假环境没有 getComputedStyle → readPanelBg 返回 transparent
+  run.mod.__internals.refreshPinBg();
+  assert.equal(run.mod.__internals.runtime.pinBg, "rgb(1, 2, 3)", "读不到就保持旧值");
+  assert.equal(lay.area.style._vars["--navfold-pin-bg"], "rgb(1, 2, 3)", "不能把变量刷成透明");
+});
+test("0.3.8 外层不再滚：打 fill 标记并写列表高度变量", () => {
+  const run = loadArtifact({ storedMode: "compact" });
+  const lay = attachLayout(run.nav, run.doc);
+  lay.area._h = 500;
+  lay.area._top = 0;
+  lay.list._h = 300;
+  lay.list._top = 180;
+  run.mod.apply(run.ctx);
+  assert.notEqual(lay.area.attrs["data-navfold-fill"], undefined, "外层要打 fill");
+  assert.ok(lay.area.style._vars["--navfold-list-h"], "要写列表高度变量");
+});
+
+test("0.3.8 关闭固定后外层标记与高度变量都清掉", () => {
+  const run = loadArtifact({ storedMode: "compact" });
+  const lay = attachLayout(run.nav, run.doc);
+  lay.area._h = 500;
+  lay.list._h = 300;
+  lay.list._top = 180;
+  run.mod.apply(run.ctx);
+  run.mod.__internals.setStickCompact(false);
+  assert.equal(lay.area.attrs["data-navfold-fill"], undefined, "外层标记要摘");
+  assert.equal(lay.area.style._vars["--navfold-list-h"], undefined, "高度变量要清");
+});
+
+test("0.3.8 列表高度算不出来时不动（避免算成负数/过小）", () => {
+  const run = loadArtifact({ storedMode: "compact" });
+  const lay = attachLayout(run.nav, run.doc);
+  lay.area._h = 100;
+  lay.list._top = 400;
+  run.mod.apply(run.ctx);
+  assert.equal(lay.area.style._vars["--navfold-list-h"], undefined, "过小的高度不写");
 });
