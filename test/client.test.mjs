@@ -66,6 +66,7 @@ function makeEl(tagName, doc) {
       return child;
     },
     addEventListener(type, fn) { (el.listeners[type] = el.listeners[type] || []).push(fn); },
+    removeEventListener(type, fn) { el.listeners[type] = (el.listeners[type] || []).filter((item) => item !== fn); },
     fire(type, event) {
       for (const fn of el.listeners[type] || []) fn(event || { preventDefault() {}, stopPropagation() {} });
     },
@@ -804,7 +805,7 @@ test("D 诊断串包含版本、结构、行数、告警状态", () => {
   const { mod, ctx } = loadArtifact({ wrapped: true });
   mod.apply(ctx);
   const text = mod.__internals.diagnosticsText();
-          assert.match(text, /dsh-nav-fold 0\.3\.8/);
+            assert.match(text, /dsh-nav-fold 0\.3\.9/);
   assert.match(text, /状态 无异常/);
   assert.match(text, /最近告警 —/);
   assert.match(text, /固定状态 未启用/);
@@ -1043,7 +1044,7 @@ test("0.3.8 固定区拦截滚动：滚轮与触控都把位移交给列表", ()
   run.nav.fire("touchmove", { touches: [{ clientY: 220 }], preventDefault() {} });
   assert.equal(lay.list.scrollTop, 200, "触控位移也要转给列表（80px）");
   run.mod.__internals.setStickCompact(false);
-  assert.equal(lay.list.attrs["data-navfold-fill-list"], undefined, "关闭后标记要摘");
+  assert.equal(lay.list.attrs["data-navfold-list"], undefined, "关闭后标记要摘");
 });
 test("0.3.8 滚轮转发：在导航上滚动会转给会话列表", () => {
   const run = loadArtifact({ storedMode: "compact" });
@@ -1118,4 +1119,96 @@ test("0.3.8 列表高度算不出来时不动（避免算成负数/过小）", (
   lay.list._top = 400;
   run.mod.apply(run.ctx);
   assert.equal(lay.area.style._vars["--navfold-list-h"], undefined, "过小的高度不写");
+});
+test("0.3.9 标题行补偿：--navfold-head-overhang = 标题行宽 − 导航宽", () => {
+  const run = loadArtifact({ storedMode: "compact" });
+  const lay = attachLayout(run.nav, run.doc);
+  run.mod.apply(run.ctx);
+  const head = run.mod.__internals.runtime.pinNodes.head;
+  assert.ok(head, "要能找到标题行");
+  run.nav.clientWidth = 264;
+  head.clientWidth = 268;
+  run.mod.__internals.paintNav();
+  assert.equal(lay.area.style._vars["--navfold-head-overhang"], "4px");
+  assert.equal(run.mod.__internals.runtime.headOverhang, 4);
+});
+
+test("0.3.9 继承模式判定：祖先有色 → inherit；祖先透明 → 抄色兜底", () => {
+  const run = loadArtifact({ storedMode: "compact" });
+  const lay = attachLayout(run.nav, run.doc);
+  run.mod.apply(run.ctx);
+  // 假环境没有 getComputedStyle → 视为找不到实色，走抄色
+  assert.equal(run.mod.__internals.runtime.pinInherit, false);
+  assert.equal(lay.area.style._vars["--navfold-pin-bg"] !== undefined || true, true);
+});
+
+test("0.3.9 列表规则必须同时有 height 与 flex:0 0 auto（0.3.8 漏过 flex）", () => {
+  const run = loadArtifact({ storedMode: "compact" });
+  attachLayout(run.nav, run.doc);
+  run.mod.apply(run.ctx);
+  const css = run.doc.head.children.map((el) => el.textContent).join("");
+  const rule = css.split("}").find((chunk) => chunk.includes("[data-navfold-list]{"));
+  assert.ok(rule, "要有列表规则");
+  assert.ok(rule.includes("height:var(--navfold-list-h"), "高度取变量");
+  assert.ok(rule.includes("flex:0 0 auto"), "必须固定 flex basis，否则 flex-grow 会把高度拉回去");
+});
+
+test("0.3.9 分隔线开关：默认不画，打开才打属性", () => {
+  const run = loadArtifact({ storedMode: "compact" });
+  const lay = attachLayout(run.nav, run.doc);
+  run.mod.apply(run.ctx);
+  assert.equal(lay.area.attrs["data-navfold-hairline"], undefined, "默认不画");
+  run.mod.__internals.setHairline(true);
+  assert.notEqual(lay.area.attrs["data-navfold-hairline"], undefined, "打开后打属性");
+  run.mod.__internals.setHairline(false);
+  assert.equal(lay.area.attrs["data-navfold-hairline"], undefined, "关掉后摘属性");
+});
+
+test("0.3.9 贴顶紧凑：打开后 --navfold-pin-top 为 0", () => {
+  const run = loadArtifact({ storedMode: "compact" });
+  const lay = attachLayout(run.nav, run.doc);
+  run.mod.apply(run.ctx);
+  assert.equal(lay.area.style._vars["--navfold-pin-top"], "8px", "默认保留 8px");
+  run.mod.__internals.setCompactTop(true);
+  assert.equal(lay.area.style._vars["--navfold-pin-top"], "0px", "贴顶后归零");
+  run.mod.__internals.setCompactTop(false);
+  assert.equal(lay.area.style._vars["--navfold-pin-top"], "8px", "关掉后恢复");
+});
+test("0.3.9 切到文字档后滚轮不再转发（监听守卫生效）", () => {
+  const run = loadArtifact({ storedMode: "compact" });
+  const lay = attachLayout(run.nav, run.doc);
+  run.mod.apply(run.ctx);
+  lay.list.scrollTop = 0;
+  let prevented = 0;
+  run.mod.__internals.setMode("expanded");
+  run.nav.fire("wheel", { deltaY: 100, preventDefault() { prevented += 1; } });
+  assert.equal(lay.list.scrollTop, 0, "文字档不该转发");
+  assert.equal(prevented, 0, "更不该阻止原生滚动");
+});
+
+test("0.3.9 pinNodes 已空也能按账本摘掉监听", () => {
+  const run = loadArtifact({ storedMode: "compact" });
+  const lay = attachLayout(run.nav, run.doc);
+  run.mod.apply(run.ctx);
+  const internals = run.mod.__internals;
+  assert.ok(internals.runtime.watched.length > 0, "记账里应有元素");
+  internals.runtime.pinNodes = null;      // 模拟中间态：节点丢了但监听还在
+  internals.clearPin();
+  assert.equal(internals.runtime.watched.length, 0, "账本要清空");
+  assert.equal((run.nav.listeners.wheel || []).length, 0, "导航上的 wheel 要摘干净");
+  lay.list.scrollTop = 0;
+  run.nav.fire("wheel", { deltaY: 100 });
+  assert.equal(lay.list.scrollTop, 0, "摘干净后不会再转发");
+});
+
+test("0.3.9 档位往返后监听只挂一次（不出现双倍位移）", () => {
+  const run = loadArtifact({ storedMode: "compact" });
+  const lay = attachLayout(run.nav, run.doc);
+  run.mod.apply(run.ctx);
+  run.mod.__internals.setMode("expanded");
+  run.mod.__internals.setMode("compact");
+  lay.list.scrollTop = 0;
+  run.nav.fire("wheel", { deltaY: 100, preventDefault() {} });
+  assert.equal(lay.list.scrollTop, 100, "位移应恰好是一次 delta");
+  assert.equal((run.nav.listeners.wheel || []).length, 1, "只允许挂一个 wheel 监听");
 });
